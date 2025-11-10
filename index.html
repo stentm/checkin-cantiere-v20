@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Check-in Cantiere</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    body::before{content:"";position:fixed;inset:0;background-image:url('bg.jpg');background-size:cover;background-position:center;opacity:.25;z-index:-1;pointer-events:none;}
+    body{margin:0;font-family:Arial,Helvetica,sans-serif;}
+    .container{background:rgba(255,255,255,.45);backdrop-filter:blur(4px);max-width:720px;margin:24px auto;padding:20px;border-radius:16px;}
+    .hidden{display:none;}
+    label{font-weight:700;display:block;margin-top:8px;}
+    input, select{width:100%;padding:12px;margin:6px 0 10px 0;font-size:18px;border:1px solid #ddd;border-radius:8px;background:#fff;}
+    .btn{width:100%;padding:14px;font-size:18px;border:none;border-radius:10px;margin-top:10px;cursor:pointer;}
+    .scan{background:#0d6efd;color:#fff;}
+    .entry{background:#28a745;color:#fff;}
+    .exit{background:#dc3545;color:#fff;}
+    #success{color:#116b2e;font-weight:700;margin-top:8px;}
+    #error{color:#b00020;font-weight:700;margin-top:8px;}
+    #reader{width:100%;max-width:360px;height:360px;margin:14px auto;background:#000;border-radius:12px;}
+    #langBox{display:flex;gap:10px;margin-bottom:10px;}
+    #langBox button{flex:1;padding:10px;border-radius:8px;border:none;font-size:16px;cursor:pointer;}
+    .sel{background:#0d6efd;color:#fff;}
+    .unsel{background:#eee;color:#333;}
+    h2{margin:8px 0 12px 0;}
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <div id="langBox">
+    <button id="btnIt">IT</button>
+    <button id="btnEn">EN</button>
+    <button id="btnAr">عربي</button>
+  </div>
+
+  <h2 id="title">Registrazione Presenza</h2>
+
+  <!-- Scanner: OBBLIGATORIO ogni volta -->
+  <div id="scanArea">
+    <button id="startScan" class="btn scan">Avvia scansione QR</button>
+    <div id="reader" class="hidden"></div>
+    <p id="scanMsg"></p>
+  </div>
+
+  <!-- Form: visibile solo DOPO scansione -->
+  <div id="formArea" class="hidden">
+    <label id="labCantiere">Cantiere</label>
+    <input id="cantiere" readonly/>
+
+    <label id="labNome">Nome e Cognome</label>
+    <input id="nome" autocomplete="name"/>
+
+    <label id="labAzienda">Azienda</label>
+    <input id="azienda"/>
+
+    <label id="labRuolo">Ruolo</label>
+    <select id="ruolo">
+      <option value="" selected disabled>-- seleziona --</option>
+      <option>Condizionamento</option>
+      <option>Fantoni</option>
+      <option>Generico</option>
+      <option>Impianti Elettrici</option>
+      <option>Impianti Idraulici</option>
+      <option>Infissi</option>
+      <option>Muratore</option>
+      <option>Piastrellista</option>
+      <option>Rasature</option>
+      <option>Responsabile Cantiere</option>
+    </select>
+
+    <label id="labTel">Telefono</label>
+    <input id="telefono" inputmode="tel" autocomplete="tel"/>
+
+    <button id="btnEntrata" class="btn entry">Entrata</button>
+    <button id="btnUscita" class="btn exit">Uscita</button>
+    <button id="btnNew" class="btn scan">Nuova scansione QR</button>
+  </div>
+
+  <p id="success"></p>
+  <p id="error"></p>
+</div>
+
+<script>
+const API_ENDPOINT="/api/save";
+let currentLang="it";
+
+/* TRADUZIONI */
+const labels={
+  it:{title:"Registrazione Presenza",cantiere:"Cantiere",nome:"Nome e Cognome",azienda:"Azienda",ruolo:"Ruolo",telefono:"Telefono",
+      start:"Avvia scansione QR",entrata:"Entrata",uscita:"Uscita",newScan:"Nuova scansione QR",
+      fill:"Compila tutti i campi",okIn:"Entrata registrata ✅",okOut:"Uscita registrata ✅",errCam:"Errore fotocamera: ",
+      scanning:"Inquadra il QR del cantiere..."},
+  en:{title:"Check-in",cantiere:"Site",nome:"Full Name",azienda:"Company",ruolo:"Role",telefono:"Phone",
+      start:"Start QR Scan",entrata:"Check-in",uscita:"Check-out",newScan:"New QR Scan",
+      fill:"Please complete all fields",okIn:"Check-in recorded ✅",okOut:"Check-out recorded ✅",errCam:"Camera error: ",
+      scanning:"Point the camera at the site QR..."},
+  ar:{title:"تسجيل الحضور",cantiere:"موقع العمل",nome:"الاسم الكامل",azienda:"الشركة",ruolo:"الدور",telefono:"الهاتف",
+      start:"بدء مسح رمز QR",entrata:"دخول",uscita:"خروج",newScan:"مسح رمز جديد",
+      fill:"يرجى ملء جميع الحقول",okIn:"✅ تم تسجيل الدخول",okOut:"✅ تم تسجيل الخروج",errCam:"خطأ في الكاميرا: ",
+      scanning:"وجّه الكاميرا نحو رمز موقع العمل..."}
+};
+
+/* Helpers */
+const $=id=>document.getElementById(id);
+const show=id=>$(id).classList.remove('hidden');
+const hide=id=>$(id).classList.add('hidden');
+
+function applyLang(l){
+  currentLang=l;
+  const L=labels[l];
+  $("title").innerText=L.title;
+  $("labCantiere").innerText=L.cantiere;
+  $("labNome").innerText=L.nome;
+  $("labAzienda").innerText=L.azienda;
+  $("labRuolo").innerText=L.ruolo;
+  $("labTel").innerText=L.telefono;
+  $("startScan").innerText=L.start;
+  $("btnEntrata").innerText=L.entrata;
+  $("btnUscita").innerText=L.uscita;
+  $("btnNew").innerText=L.newScan;
+  $("btnIt").className=(l==="it")?"sel":"unsel";
+  $("btnEn").className=(l==="en")?"sel":"unsel";
+  $("btnAr").className=(l==="ar")?"sel":"unsel";
+  document.documentElement.setAttribute("dir", l==="ar"?"rtl":"ltr");
+  localStorage.setItem("lang", l);
+}
+$("btnIt").onclick=()=>applyLang("it");
+$("btnEn").onclick=()=>applyLang("en");
+$("btnAr").onclick=()=>applyLang("ar");
+applyLang(localStorage.getItem("lang")||"it");
+
+/* Ripristina solo dati lavoratore */
+try{
+  const saved=JSON.parse(localStorage.getItem("worker")||"{}");
+  if(saved.nome){$("nome").value=saved.nome;}
+  if(saved.azienda){$("azienda").value=saved.azienda;}
+  if(saved.telefono){$("telefono").value=saved.telefono;}
+  if(saved.ruolo){$("ruolo").value=saved.ruolo;}
+}catch(e){}
+
+/* QR scanning obbligatorio ogni volta */
+let html5QrCode;
+async function startCameraScan(){
+  $("error").innerText=""; $("success").innerText="";
+  try{
+    if(!html5QrCode){ html5QrCode=new Html5Qrcode("reader"); }
+    show("reader");
+    await html5QrCode.start(
+      {facingMode:"environment"},
+      {fps:10, qrbox:{width:320, height:320}},
+      (decoded)=>{ html5QrCode.stop().then(()=>handleQr(decoded)); }
+    );
+    $("scanMsg").innerText=labels[currentLang].scanning;
+  }catch(e){
+    $("error").innerText=labels[currentLang].errCam + e;
+  }
+}
+$("startScan").onclick=startCameraScan;
+
+$("btnNew").onclick=()=>{
+  show("scanArea"); hide("formArea");
+  $("success").innerText=""; $("error").innerText="";
+};
+
+/* Estrai cantiere dal QR (JSON / URL / testo) */
+function extractCantiere(text){
+  try{ const obj=JSON.parse(text); if(obj.cantiere) return obj.cantiere; }catch(_){}
+  try{ const u=new URL(text); const p=u.searchParams.get("cantiere"); if(p) return p; }catch(_){}
+  return text;
+}
+function handleQr(text){
+  const c = (extractCantiere(text)||"").trim();
+  if(!c){ $("error").innerText="QR non valido"; return; }
+  $("cantiere").value=c.toUpperCase();
+  hide("scanArea"); show("formArea");
+}
+
+/* Invio verso SheetDB */
+async function send(azione){
+  const nome=$("nome").value.trim();
+  const azienda=$("azienda").value.trim();
+  const ruolo=($("ruolo").value||"").trim();
+  const telefono=$("telefono").value.trim();
+  const cantiere=($("cantiere").value||"").trim().toUpperCase();
+
+  if(!nome||!azienda||!ruolo||!telefono||!cantiere){
+    $("error").innerText=labels[currentLang].fill; return;
+  }
+
+  // Salva dati worker per la prossima volta
+  localStorage.setItem("worker", JSON.stringify({nome, azienda, telefono, ruolo}));
+
+  const now=new Date();
+  const payload={
+    data: now.toLocaleDateString("it-IT"),
+    ora: now.toLocaleTimeString("it-IT"),
+    nome, azienda, ruolo, telefono, cantiere, azione
+  };
+
+  try{
+    const res=await fetch(API_ENDPOINT,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    });
+    if(!res.ok) throw new Error(await res.text());
+    $("success").innerText=(azione==="ENTRATA")?labels[currentLang].okIn:labels[currentLang].okOut;
+    $("error").innerText="";
+  }catch(e){
+    $("error").innerText="Errore: "+e.message;
+  }
+}
+document.getElementById("btnEntrata").onclick=()=>send("ENTRATA");
+document.getElementById("btnUscita").onclick=()=>send("USCITA");
+</script>
+</body>
+</html>
